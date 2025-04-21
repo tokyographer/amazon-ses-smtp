@@ -1,5 +1,9 @@
 <?php
 
+if (is_admin() && ases_is_license_valid()) {
+    require_once ASES_PLUGIN_DIR . 'includes/ses-mailer.php';
+}
+
 function ases_add_settings_page() {
     add_options_page(
         'Amazon SES SMTP',
@@ -16,6 +20,15 @@ function ases_render_settings_page() {
         <h1>Amazon SES SMTP Settings</h1>
 
         <?php settings_errors(); ?>
+        <?php
+        if (isset($_GET['email_sent'])) {
+            echo "<div class='notice notice-success is-dismissible'><p>✅ Test email sent successfully.</p></div>";
+        } elseif (isset($_GET['email_fail'])) {
+            echo "<div class='notice notice-error is-dismissible'><p>❌ Failed to send test email. Check SES credentials.</p></div>";
+        } elseif (isset($_GET['email_error'])) {
+            echo "<div class='notice notice-error is-dismissible'><p>❌ Error sending email. " . esc_html($_GET['msg'] ?? '') . "</p></div>";
+        }
+        ?>
 
         <form method="post" action="options.php">
             <?php
@@ -25,39 +38,11 @@ function ases_render_settings_page() {
             ?>
         </form>
 
-        <?php
-        $license_data = get_option('ases_license_data');
-        if ($license_data && isset($license_data['expires'])):
-            $expired = time() > intval($license_data['expires']);
-            ?>
-            <div class="notice <?= $expired ? 'notice-error' : 'notice-success' ?>">
-                <p>
-                    License Status: <?= $expired ? '❌ Expired' : '✅ Active' ?><br>
-                    Bound Domain: <strong><?= esc_html($license_data['domain'] ?? '—') ?></strong><br>
-                    Product: <strong><?= esc_html($license_data['product_id'] ?? '—') ?></strong><br>
-                    Expires: <?= date('Y-m-d H:i', intval($license_data['expires'])) ?>
-                </p>
-            </div>
-        <?php endif; ?>
-
-        <?php if ($license_data): ?>
-            <h2>Debug Info</h2>
-            <p>This information can be shared with support:</p>
-            <textarea readonly style="width:100%; height:150px;"><?=
-                esc_textarea(json_encode([
-                    'email' => $license_data['email'] ?? '',
-                    'product_id' => $license_data['product_id'] ?? '',
-                    'domain' => $license_data['domain'] ?? '',
-                    'license_key' => substr($license_data['license_key'] ?? '', 0, 4) . '****',
-                    'expires' => date('c', intval($license_data['expires'] ?? 0)),
-                ], JSON_PRETTY_PRINT))
-            ?></textarea>
-        <?php endif; ?>
-
         <hr>
 
         <h2>Send Test Email</h2>
-        <form method="post">
+        <form method="post" action="<?= esc_url(admin_url('admin-post.php')) ?>">
+            <input type="hidden" name="action" value="ases_send_test_email">
             <input type="email" name="ases_test_email" placeholder="Email address" required>
             <button type="submit" class="button">Send Test Email</button>
         </form>
@@ -75,6 +60,7 @@ add_action('admin_init', 'ases_register_settings');
 function ases_register_settings() {
     register_setting('ases_settings_group', 'ases_smtp_user');
     register_setting('ases_settings_group', 'ases_smtp_pass');
+    register_setting('ases_settings_group', 'ases_smtp_host');
     register_setting('ases_settings_group', 'ases_license_key');
     register_setting('ases_settings_group', 'ases_license_email');
 
@@ -82,12 +68,35 @@ function ases_register_settings() {
 
     add_settings_field('smtp_user', 'SMTP Username', function () {
         $disabled = !ases_is_license_valid() ? 'disabled' : '';
-        echo '<input type="text" name="ases_smtp_user" value="' . esc_attr(get_option('ases_smtp_user')) . "\" class=\"regular-text\" $disabled>";
+        echo '<input type="text" name="ases_smtp_user" value="' . esc_attr(get_option('ases_smtp_user')) . '" class="regular-text" ' . $disabled . '>';
     }, 'amazon-ses-smtp', 'ases_main');
 
     add_settings_field('smtp_pass', 'SMTP Password', function () {
         $disabled = !ases_is_license_valid() ? 'disabled' : '';
-        echo '<input type="password" name="ases_smtp_pass" value="' . esc_attr(get_option('ases_smtp_pass')) . "\" class=\"regular-text\" $disabled>";
+        echo '<input type="password" name="ases_smtp_pass" value="' . esc_attr(get_option('ases_smtp_pass')) . '" class="regular-text" ' . $disabled . '>';
+    }, 'amazon-ses-smtp', 'ases_main');
+
+    add_settings_field('smtp_host', 'Amazon SES Region Endpoint', function () {
+        $disabled = !ases_is_license_valid() ? 'disabled' : '';
+        $selected = get_option('ases_smtp_host');
+        $regions = [
+            'email-smtp.us-east-1.amazonaws.com' => 'US East (N. Virginia)',
+            'email-smtp.us-west-2.amazonaws.com' => 'US West (Oregon)',
+            'email-smtp.eu-west-1.amazonaws.com' => 'EU (Ireland)',
+            'email-smtp.ap-south-1.amazonaws.com' => 'Asia Pacific (Mumbai)',
+            'email-smtp.ap-northeast-1.amazonaws.com' => 'Asia Pacific (Tokyo)',
+            'email-smtp.ap-northeast-2.amazonaws.com' => 'Asia Pacific (Seoul)',
+            'email-smtp.ap-southeast-1.amazonaws.com' => 'Asia Pacific (Singapore)',
+            'email-smtp.ap-southeast-2.amazonaws.com' => 'Asia Pacific (Sydney)',
+            'email-smtp.eu-central-1.amazonaws.com' => 'EU (Frankfurt)',
+            'email-smtp.sa-east-1.amazonaws.com' => 'South America (São Paulo)'
+        ];
+        echo '<select name="ases_smtp_host" class="regular-text" ' . $disabled . '>';
+        foreach ($regions as $host => $label) {
+            $is_selected = selected($selected, $host, false);
+            echo "<option value='$host' $is_selected>$label ($host)</option>";
+        }
+        echo '</select>';
     }, 'amazon-ses-smtp', 'ases_main');
 
     add_settings_field('license_email', 'License Email', function () {
@@ -99,53 +108,48 @@ function ases_register_settings() {
     }, 'amazon-ses-smtp', 'ases_main');
 }
 
-add_filter('pre_update_option_ases_license_key', 'ases_validate_license_on_save', 10, 2);
-function ases_validate_license_on_save($new_value, $old_value) {
-    $email = sanitize_email($_POST['ases_license_email'] ?? '');
-    $key = sanitize_text_field($new_value);
-
-    if (empty($email) || empty($key)) {
-        add_settings_error('ases_license_key', 'license_missing', __('❌ Please enter both License Email and License Key.', 'amazon-ses-smtp'), 'error');
-        return $old_value;
+add_action('admin_post_ases_send_test_email', 'ases_send_test_email_handler');
+function ases_send_test_email_handler() {
+    if (!current_user_can('manage_options')) {
+        wp_die('Unauthorized');
     }
 
-    $result = ases_validate_license($email, $key);
-
-    if (!empty($result['success'])) {
-        add_settings_error('ases_license_key', 'license_success', __('✅ License validated successfully. Expires: ', 'amazon-ses-smtp') . date('Y-m-d H:i', $result['expires']), 'updated');
-        return $key;
-    } else {
-        add_settings_error('ases_license_key', 'license_failed', __('❌ License not valid. Please purchase a valid license.', 'amazon-ses-smtp'), 'error');
-        return $old_value;
+    $to = sanitize_email($_POST['ases_test_email'] ?? '');
+    if (empty($to)) {
+        wp_redirect(admin_url('options-general.php?page=amazon-ses-smtp&email_error=1'));
+        exit;
     }
-}
 
-function ases_block_smtp_save_if_license_invalid($new_value, $old_value) {
-    if (!ases_is_license_valid()) {
-        add_settings_error('ases_smtp_user', 'license_required', __('❌ A valid license is required to save SMTP settings.', 'amazon-ses-smtp'), 'error');
-        return $old_value;
+    $user = get_option('ases_smtp_user');
+    $pass = get_option('ases_smtp_pass');
+    $host = get_option('ases_smtp_host');
+
+    if (empty($user) || empty($pass) || empty($host)) {
+        wp_redirect(admin_url('options-general.php?page=amazon-ses-smtp&email_fail=1'));
+        exit;
     }
-    return $new_value;
-}
-add_filter('pre_update_option_ases_smtp_user', 'ases_block_smtp_save_if_license_invalid', 10, 2);
-add_filter('pre_update_option_ases_smtp_pass', 'ases_block_smtp_save_if_license_invalid', 10, 2);
 
-register_activation_hook(__FILE__, function () {
-    if (!wp_next_scheduled('ases_weekly_revalidate_license')) {
-        wp_schedule_event(time(), 'weekly', 'ases_weekly_revalidate_license');
+    add_action('phpmailer_init', function ($phpmailer) use ($user, $pass, $host) {
+        $phpmailer->isSMTP();
+        $phpmailer->Host       = $host;
+        $phpmailer->SMTPAuth   = true;
+        $phpmailer->Port       = 587;
+        $phpmailer->Username   = $user;
+        $phpmailer->Password   = $pass;
+        $phpmailer->SMTPSecure = 'tls';
+        $phpmailer->From       = $user;
+        $phpmailer->FromName   = 'Amazon SES SMTP Plugin';
+    });
+
+    try {
+        $sent = wp_mail($to, 'Amazon SES Test Email', 'This is a test email sent via Amazon SES SMTP plugin.');
+        if ($sent) {
+            wp_redirect(admin_url('options-general.php?page=amazon-ses-smtp&email_sent=1'));
+        } else {
+            wp_redirect(admin_url('options-general.php?page=amazon-ses-smtp&email_fail=1'));
+        }
+    } catch (Exception $e) {
+        wp_redirect(admin_url('options-general.php?page=amazon-ses-smtp&email_error=1&msg=' . urlencode($e->getMessage())));
     }
-});
-
-register_deactivation_hook(__FILE__, function () {
-    wp_clear_scheduled_hook('ases_weekly_revalidate_license');
-});
-
-add_action('ases_weekly_revalidate_license', 'ases_revalidate_license');
-function ases_revalidate_license() {
-    $email = get_option('ases_license_email');
-    $key   = get_option('ases_license_key');
-
-    if ($email && $key) {
-        ases_validate_license($email, $key);
-    }
+    exit;
 }
