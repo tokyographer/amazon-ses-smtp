@@ -1,0 +1,32 @@
+# Copyright (C) 2025 Mediared.es
+# This file is distributed under the same license as the Amazon SES SMTP for WordPress plugin.
+msgid ""
+msgstr ""
+"Project-Id-Version: Amazon SES SMTP for WordPress 1.0.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/amazon-ses-smtp\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2025-04-21T19:41:40+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.4.0\n"
+"X-Domain: amazon-ses-smtp\n"
+
+#. Plugin Name of the plugin
+msgid "Amazon SES SMTP for WordPress"
+msgstr ""
+
+#. Plugin URI of the plugin
+#. Author URI of the plugin
+msgid "https://mediared.es"
+msgstr ""
+
+#. Description of the plugin
+msgid "Send emails from your WordPress site using Amazon SES. The free version allows sending test emails only. A license is required to activate full functionality."
+msgstr ""
+
+#. Author of the plugin
+msgid "Mediared.es"
+msgstr ""
