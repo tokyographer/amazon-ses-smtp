@@ -15,22 +15,7 @@ function ases_render_settings_page() {
     <div class="wrap">
         <h1>Amazon SES SMTP Settings</h1>
 
-        <?php
-        // Handle license activation
-        if (isset($_POST['ases_activate_license']) && check_admin_referer('ases_activate_license_action')) {
-            $email = sanitize_email($_POST['ases_license_email']);
-            $key = sanitize_text_field($_POST['ases_license_key']);
-            $result = ases_validate_license($email, $key);
-
-            add_action('admin_notices', function () use ($result) {
-                if ($result['success']) {
-                    echo "<div class='notice notice-success is-dismissible'><p>✅ License activated successfully. Expires: " . date('Y-m-d H:i', $result['expires']) . "</p></div>";
-                } else {
-                    echo "<div class='notice notice-error is-dismissible'><p>❌ License activation failed: " . esc_html($result['error']) . "</p></div>";
-                }
-            });
-        }
-        ?>
+        <?php settings_errors(); ?>
 
         <form method="post" action="options.php">
             <?php
@@ -40,13 +25,6 @@ function ases_render_settings_page() {
             ?>
         </form>
 
-        <form method="post">
-            <p>
-                <?php wp_nonce_field('ases_activate_license_action'); ?>
-                <button type="submit" name="ases_activate_license" class="button button-primary">Validate License</button>
-            </p>
-        </form>
-        
         <?php
         $license_data = get_option('ases_license_data');
         if ($license_data && isset($license_data['expires'])):
@@ -61,7 +39,7 @@ function ases_render_settings_page() {
                 </p>
             </div>
         <?php endif; ?>
-        
+
         <?php if ($license_data): ?>
             <h2>Debug Info</h2>
             <p>This information can be shared with support:</p>
@@ -75,7 +53,7 @@ function ases_render_settings_page() {
                 ], JSON_PRETTY_PRINT))
             ?></textarea>
         <?php endif; ?>
-        
+
         <hr>
 
         <h2>Send Test Email</h2>
@@ -121,6 +99,37 @@ function ases_register_settings() {
     }, 'amazon-ses-smtp', 'ases_main');
 }
 
+add_filter('pre_update_option_ases_license_key', 'ases_validate_license_on_save', 10, 2);
+function ases_validate_license_on_save($new_value, $old_value) {
+    $email = sanitize_email($_POST['ases_license_email'] ?? '');
+    $key = sanitize_text_field($new_value);
+
+    if (empty($email) || empty($key)) {
+        add_settings_error('ases_license_key', 'license_missing', __('❌ Please enter both License Email and License Key.', 'amazon-ses-smtp'), 'error');
+        return $old_value;
+    }
+
+    $result = ases_validate_license($email, $key);
+
+    if (!empty($result['success'])) {
+        add_settings_error('ases_license_key', 'license_success', __('✅ License validated successfully. Expires: ', 'amazon-ses-smtp') . date('Y-m-d H:i', $result['expires']), 'updated');
+        return $key;
+    } else {
+        add_settings_error('ases_license_key', 'license_failed', __('❌ License not valid. Please purchase a valid license.', 'amazon-ses-smtp'), 'error');
+        return $old_value;
+    }
+}
+
+function ases_block_smtp_save_if_license_invalid($new_value, $old_value) {
+    if (!ases_is_license_valid()) {
+        add_settings_error('ases_smtp_user', 'license_required', __('❌ A valid license is required to save SMTP settings.', 'amazon-ses-smtp'), 'error');
+        return $old_value;
+    }
+    return $new_value;
+}
+add_filter('pre_update_option_ases_smtp_user', 'ases_block_smtp_save_if_license_invalid', 10, 2);
+add_filter('pre_update_option_ases_smtp_pass', 'ases_block_smtp_save_if_license_invalid', 10, 2);
+
 register_activation_hook(__FILE__, function () {
     if (!wp_next_scheduled('ases_weekly_revalidate_license')) {
         wp_schedule_event(time(), 'weekly', 'ases_weekly_revalidate_license');
@@ -132,7 +141,6 @@ register_deactivation_hook(__FILE__, function () {
 });
 
 add_action('ases_weekly_revalidate_license', 'ases_revalidate_license');
-
 function ases_revalidate_license() {
     $email = get_option('ases_license_email');
     $key   = get_option('ases_license_key');
